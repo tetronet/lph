@@ -161,6 +161,7 @@ namespace LPH_Edit_Viewer
             {
                 if (isInited)
                 {
+                    fs.Flush(true);
                     File.Copy(tempFileName, realFileName, true);
                 }
                 else
@@ -181,6 +182,7 @@ namespace LPH_Edit_Viewer
             {
                 if (isInited)
                 {
+                    fs.Flush(true);
                     File.Copy(tempFileName, whereToFlush, true);
                 }
                 else

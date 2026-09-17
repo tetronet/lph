@@ -56,11 +56,13 @@ namespace LPH_Edit_Viewer
         private TcpClient? serialPort;
         private PolylineAssembler polylineAssembler = new PolylineAssembler();
         private List<byte> receiveBuffer = new List<byte>();
-        private object _receiveBufferLock = new object();
+        private readonly Lock _receiveBufferLock = new();
         private bool usingTetronet = false;
         private IModem? Modem;
         private SRTPClient? ReliableTetronetClient;
         private const int CHUNK_SIZE = 8000;
+        private int RetransmittedPacketCount = 0;
+        private byte[] AesKey = new byte[32];
 
         public Viewer(string filename)
         {
@@ -381,6 +383,11 @@ namespace LPH_Edit_Viewer
                                     ReliableTetronetClient = new(Modem, new(options.SerialPortName), "lphrp", 125000000, TIMEOUT_MS * 10000);
                                     ReliableTetronetClient.TicksPacketDelay = (int)(10000000d / options.DataBitrate);
                                 }
+                                ReliableTetronetClient.OnRetransmit += delegate (long seqno)
+                                {
+                                    RetransmittedPacketCount++;
+                                    Debug.WriteLineIf(RetransmittedPacketCount % 100 == 0, $"Retransmitted {RetransmittedPacketCount} packets");
+                                };
                             }//);
                         }
                         else
@@ -409,6 +416,7 @@ namespace LPH_Edit_Viewer
                         }
                         AcceptOnlyFromLogin = options.Login;
                         AcceptOnlyFromPassword = options.Password;
+                        AesKey = [.. SHA512.HashData(Encoding.UTF8.GetBytes(AcceptOnlyFromPassword)).Take(32)];
                         AllowEncryption = options.UsingEncryption;
                         pps = options.DataBitrate;
                         if (!options.AuthReqired)
@@ -562,7 +570,7 @@ namespace LPH_Edit_Viewer
                                 return;
                             }
                             DebugWriter.WriteDebug("data on wire: " + string.Join(",", receivedEncrypted));
-                            dataReceived = Aes256Helper.Decrypt([.. receivedEncrypted.Skip(16)], [.. SHA512.HashData(Encoding.UTF8.GetBytes(AcceptOnlyFromPassword)).Take(32)], [.. receivedEncrypted.Take(16)]);
+                            dataReceived = Aes256Helper.Decrypt(receivedEncrypted, AesKey);
                         }
                         //AlreadyReceived.Add(id);
                         // send the acknowledgement
@@ -819,32 +827,15 @@ namespace LPH_Edit_Viewer
                         dataBytes.CopyTo(dataToSend, 4);
                         BinaryPrimitives.WriteInt32BigEndian(dataToSend, dataBytes.Length);
                         UnivWrite(dataToSend);
-                        /*byte[] dataAndPackNO = new byte[8 + d.Length];
-                        Span<byte> packNoBytes = new byte[8];
-                        BinaryPrimitives.WriteUInt64BigEndian(packNoBytes, CurrentPacketNo);
-                        Array.Copy(packNoBytes.ToArray(), dataAndPackNO, 8);
-                        Array.Copy(d, 0, dataAndPackNO, 8, d.Length);
-                        serialPort.Send(dataAndPackNO, dataAndPackNO.Length, communicatingWith);
-                        PendingForAcknowledgementData.TryAdd(CurrentPacketNo, d);*/
-                        //Console.WriteLine("editor successfully sent unencrypted datagram");
                     }
                     else
                     {
-                        byte[] iv = new byte[16];
-                        rng.GetBytes(iv);
-                        byte[] denc = Aes256Helper.Encrypt(data, SHA512.HashData(Encoding.UTF8.GetBytes(AcceptOnlyFromPassword)).Take(32).ToArray(), iv);
-                        byte[] ivdenc = new byte[16 + denc.Length];
-                        Array.Copy(iv, 0, ivdenc, 0, 16);
-                        Array.Copy(denc, 0, ivdenc, 16, denc.Length);
-                        byte[] dataToSend = new byte[ivdenc.Length + 4];
-                        ivdenc.CopyTo(dataToSend, 4);
-                        BinaryPrimitives.WriteInt32BigEndian(dataToSend, ivdenc.Length);
+                        byte[] encrypted = Aes256Helper.Encrypt(data, AesKey);
+                        byte[] dataToSend = new byte[encrypted.Length + 4];
+                        encrypted.CopyTo(dataToSend, 4);
+                        BinaryPrimitives.WriteInt32BigEndian(dataToSend, encrypted.Length);
                         UnivWrite(dataToSend);
-                        //PendingForAcknowledgementData.TryAdd(CurrentPacketNo, ivdenc.Skip(8).ToArray());
-                        //Console.WriteLine("editor successfully sent encrypted datagram");
                     }
-                    //PendingForAcknowledgement.TryAdd(CurrentPacketNo, DateTime.Now.Ticks);
-                    //CurrentPacketNo++;
                     lastpkttx = DateTime.Now.Ticks;
                 }
                 catch (Exception e)
@@ -1006,12 +997,13 @@ namespace LPH_Edit_Viewer
                             {
                                 StringBuilder sb = new();
                                 // batched reading
-                                for (int i = 0; i < 64; i++)
+                                for (int i = 0; i < 1024; i++)
                                 {
                                     idx = lphData.ReadBefore('\n', idx, out string lineObject);
                                     if (lineObject.Length < 2)
                                     {
                                         didntfoundEnd = false;
+                                        Debug.WriteLine("found the end");
                                         break;
                                     }
                                     sb.Append('e').Append(lineObject).Append('\n');

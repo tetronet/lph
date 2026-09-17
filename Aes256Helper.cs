@@ -1,89 +1,58 @@
 ﻿using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace LPH_Edit_Viewer
 {
     public static class Aes256Helper
     {
-        // Метод для шифрования текста
-        public static byte[] Encrypt(string plainText, byte[] key, byte[] iv)
+        public static byte[] Encrypt(string plainText, byte[] key)
         {
-            // Проверяем входные данные
-            if (plainText == null || plainText.Length <= 0)
-                throw new ArgumentNullException(nameof(plainText));
-            if (key == null || key.Length != 32) // Ключ должен быть 32 байта
-                throw new ArgumentException("Key must be 32 bytes for AES-256.", nameof(key));
-            if (iv == null || iv.Length != 16) // IV должен быть 16 байт
-                throw new ArgumentException("IV must be 16 bytes.", nameof(iv));
+            byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
+            byte[] iv = RandomNumberGenerator.GetBytes(16);
 
-            byte[] encrypted;
-
-            // Создаем объект AES с заданными ключом и IV
-            using (Aes aesAlg = Aes.Create())
+            byte[] cipher;
+            using (var aes = Aes.Create())
             {
-                aesAlg.Key = key;
-                aesAlg.IV = iv;
-
-                // Создаем шифратор
-                ICryptoTransform encryptor = aesAlg.CreateEncryptor(aesAlg.Key, aesAlg.IV);
-
-                // Используем MemoryStream для хранения зашифрованных данных
-                using (MemoryStream msEncrypt = new MemoryStream())
-                {
-                    using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-                    {
-                        using (StreamWriter swEncrypt = new StreamWriter(csEncrypt))
-                        {
-                            // Записываем данные в поток для шифрования
-                            swEncrypt.Write(plainText);
-                        }
-                        encrypted = msEncrypt.ToArray();
-                    }
-                }
+                aes.Key = key; aes.IV = iv;
+                using var enc = aes.CreateEncryptor();
+                cipher = enc.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
             }
 
-            // Возвращаем зашифрованные байты
-            return encrypted;
+            byte[] macInput = new byte[iv.Length + cipher.Length];
+            Buffer.BlockCopy(iv, 0, macInput, 0, iv.Length);
+            Buffer.BlockCopy(cipher, 0, macInput, iv.Length, cipher.Length);
+            byte[] mac = HMACSHA256.HashData(key, macInput);
+
+            byte[] result = new byte[iv.Length + cipher.Length + mac.Length];
+            Buffer.BlockCopy(iv, 0, result, 0, iv.Length);
+            Buffer.BlockCopy(cipher, 0, result, iv.Length, cipher.Length);
+            Buffer.BlockCopy(mac, 0, result, iv.Length + cipher.Length, mac.Length);
+            return result;
         }
 
-        // Метод для дешифрования текста
-        public static string Decrypt(byte[] cipherText, byte[] key, byte[] iv)
+        public static string Decrypt(byte[] data, byte[] key)
         {
-            // Проверяем входные данные
-            if (cipherText == null || cipherText.Length <= 0)
-                throw new ArgumentNullException(nameof(cipherText));
-            if (key == null || key.Length != 32)
-                throw new ArgumentException("Key must be 32 bytes for AES-256.", nameof(key));
-            if (iv == null || iv.Length != 16)
-                throw new ArgumentException("IV must be 16 bytes.", nameof(iv));
+            if (data.Length < 16 + 16 + 32) throw new InvalidDataException("too short");
 
-            string plaintext = null;
+            byte[] iv = data[..16];
+            byte[] mac = data[^32..];
+            byte[] cipher = data[16..^32];
 
-            // Создаем объект AES с заданными ключом и IV
-            using (Aes aesAlg = Aes.Create())
-            {
-                aesAlg.Key = key;
-                aesAlg.IV = iv;
+            byte[] macInput = new byte[iv.Length + cipher.Length];
+            Buffer.BlockCopy(iv, 0, macInput, 0, iv.Length);
+            Buffer.BlockCopy(cipher, 0, macInput, iv.Length, cipher.Length);
+            byte[] expected = HMACSHA256.HashData(key, macInput);
 
-                // Создаем дешифратор
-                ICryptoTransform decryptor = aesAlg.CreateDecryptor(aesAlg.Key, aesAlg.IV);
+            if (!CryptographicOperations.FixedTimeEquals(mac, expected))
+                throw new InvalidDataException("MAC mismatch");
 
-                // Используем MemoryStream с зашифрованными данными
-                using (MemoryStream msDecrypt = new MemoryStream(cipherText))
-                {
-                    using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-                    {
-                        using (StreamReader srDecrypt = new StreamReader(csDecrypt))
-                        {
-                            // Читаем расшифрованные данные из потока
-                            plaintext = srDecrypt.ReadToEnd();
-                        }
-                    }
-                }
-            }
-
-            return plaintext;
+            using var aes = Aes.Create();
+            aes.Key = key; aes.IV = iv;
+            using var dec = aes.CreateDecryptor();
+            byte[] plain = dec.TransformFinalBlock(cipher, 0, cipher.Length);
+            return Encoding.UTF8.GetString(plain);
         }
     }
 }

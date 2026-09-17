@@ -1,6 +1,5 @@
 ﻿using Microsoft.VisualBasic;
 using ModemAPI;
-using SocketIOClient.Transport.WebSockets;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
@@ -69,6 +68,7 @@ namespace LPH_Edit_Viewer
         private bool encryption = false;
         private bool actuallyEncrypting = false;
         private RandomNumberGenerator rng = RandomNumberGenerator.Create();
+        private byte[] AesKey = new byte[32];
         // homemade tcp
         private const int TIMEOUT_MS = 2000;
         private int pps = 500;
@@ -758,6 +758,7 @@ namespace LPH_Edit_Viewer
                             login = options.Login;
                             DebugWriter.WriteDebug("login: " + options.Login);
                             password = options.Password;
+                            AesKey = [.. SHA512.HashData(Encoding.UTF8.GetBytes(password)).Take(32)];
                             DebugWriter.WriteDebug("password was not printed out to the standart I/O stream for security reasons");
                             encryption = options.UsingEncryption;
                             DebugWriter.WriteDebug("encrypt: " + options.UsingEncryption);
@@ -774,10 +775,7 @@ namespace LPH_Edit_Viewer
                                 Modem?.Transmit("cnt", new(options.SerialPortName), "lphrp", 125000000);
                             }
                             //Thread.Sleep(1000);
-                            _ = Task.Run(() =>
-                            {
-                                Write("binit");
-                            });  // binit = buffer initialize
+                            
                             TransmitPictureToSerialPort = true;
                         }
                         else
@@ -958,7 +956,7 @@ namespace LPH_Edit_Viewer
                             //if (!AlreadyReceived.Contains(packNoReceived))
                             // read payload for this lph datagram
                             byte[] receivedEncrypted = onWire;
-                            dataReceived = Aes256Helper.Decrypt([.. receivedEncrypted.Skip(16)], [.. SHA512.HashData(Encoding.UTF8.GetBytes(password)).Take(32)], [.. receivedEncrypted.Take(16)]);
+                            dataReceived = Aes256Helper.Decrypt(receivedEncrypted, AesKey);
                             /*// put this packet no to list to prevent reading this package more than 1 time
                             AlreadyReceived.Add(packNoReceived);
                             // increment the reading index
@@ -1334,15 +1332,10 @@ namespace LPH_Edit_Viewer
                     }
                     else
                     {
-                        byte[] iv = new byte[16];
-                        rng.GetBytes(iv);
-                        byte[] denc = Aes256Helper.Encrypt(data, SHA512.HashData(Encoding.UTF8.GetBytes(password)).Take(32).ToArray(), iv);
-                        byte[] ivdenc = new byte[16 + denc.Length];
-                        Array.Copy(iv, 0, ivdenc, 0, 16);
-                        Array.Copy(denc, 0, ivdenc, 16, denc.Length);
-                        byte[] dataToSend = new byte[ivdenc.Length + 4];
-                        ivdenc.CopyTo(dataToSend, 4);
-                        BinaryPrimitives.WriteInt32BigEndian(dataToSend, ivdenc.Length);
+                        byte[] encrypted = Aes256Helper.Encrypt(data, AesKey);
+                        byte[] dataToSend = new byte[4 + encrypted.Length];
+                        encrypted.CopyTo(dataToSend, 4);
+                        BinaryPrimitives.WriteInt32BigEndian(dataToSend, encrypted.Length);
                         UnivWrite(dataToSend);
                         //PendingForAcknowledgementData.TryAdd(CurrentPacketNo, ivdenc.Skip(8).ToArray());
                         //Console.WriteLine("editor successfully sent encrypted datagram");
@@ -1681,6 +1674,11 @@ namespace LPH_Edit_Viewer
                         {
                             Task.Run(() => MessageBox.Show("Connection established", "Tsu-k Executive"));
                             IsConnectionActive = true;
+                            _ = Task.Run(() =>
+                            {
+                                DebugWriter.WriteDebug("SENT BIINT!!");
+                                Write("binit");
+                            });  // binit = buffer initialize
                             if (login.Length != 0)
                             {
                                 Task.Run(() => Write("l:" + login));
