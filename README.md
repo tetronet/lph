@@ -23,10 +23,12 @@ It's very straight forward, just open the program, press "Create new LPH file" a
    tetronet
    virtual
    wss://data-set.su:3000/
+   socket.io
    ```
-3) Follow the TCP socket instruction, but instead of typing 0.0.0.0:130, leave it empty and press "Tetronet Address"
-4) And on the LPH Editor's side, type in the address of the viewer. It's gonna be displayed as a pop-up window, and in the title of the viewer, so you won't forget it. Also press the "Tetronet Address" mark
-5) Enjoy!
+   P.s. if you want speed make your own FCIAS (repository is available) and use ws://yourfcias.net:30000/ and swap "socket.io" to "websocket"
+4) Follow the TCP socket instruction, but instead of typing 0.0.0.0:130, leave it empty and press "Tetronet Address"
+5) And on the LPH Editor's side, type in the address of the viewer. It's gonna be displayed as a pop-up window, and in the title of the viewer, so you won't forget it. Also press the "Tetronet Address" mark
+6) Enjoy!
 
 ### Moments
 Viewer will send cursor movement to the editor, but for some reason until you press Force Redraw in the editor, the cursor is not erasing after a movement, so just press it once. Also tetronet can be laggy, so if you don't need NAT traversal because you're drawing between 2 computers in the same LAN, just use TCP sockets.
