@@ -24,7 +24,7 @@ namespace LPH_Edit_Viewer
         private int totalObjectCount = 0;
         private int lastObjectCount = 0;
         private float objectRate = 0;
-        private DiskStringBuilder lphData = new DiskStringBuilder("./temp/viewerTemp.tmp");
+        private DiskStringBuilder lphData = new($"./temp/viewer-{Guid.NewGuid()}.tmp");
         private Graphics graphics;
         private Graphics tempGraphics;
         private Bitmap pictureOnScreen;
@@ -388,7 +388,7 @@ namespace LPH_Edit_Viewer
                                     RetransmittedPacketCount++;
                                     Debug.WriteLineIf(RetransmittedPacketCount % 100 == 0, $"Retransmitted {RetransmittedPacketCount} packets");
                                 };
-                            }//);
+                            }
                         }
                         else
                         {
@@ -541,22 +541,6 @@ namespace LPH_Edit_Viewer
                     string dataReceived = "";
                     try
                     {
-                        // read datagram
-                        //byte[] onWire = serialPort.Receive(ref sentfrom);
-                        // length < 8, this is an invalid packet
-                        /*if (onWire.Length < 8)
-                        {
-                            continue;
-                        }*/
-                        // length == 8, this is an acknowledgement
-                        /*ulong id = BinaryPrimitives.ReadUInt64BigEndian(onWire.Take(8).ToArray());
-                        if (onWire.Length == 8)
-                        {
-                            PendingForAcknowledgement.TryRemove(id, out _);
-                            PendingForAcknowledgementData.TryRemove(id, out _);
-                            continue;
-                        }*/
-                        // length > 8, this is a datagram with command/object
                         if (!EncryptingDatagrams)
                         {
                             dataReceived = Encoding.UTF8.GetString(onWire.ToArray());
@@ -572,9 +556,6 @@ namespace LPH_Edit_Viewer
                             DebugWriter.WriteDebug("data on wire: " + string.Join(",", receivedEncrypted));
                             dataReceived = Aes256Helper.Decrypt(receivedEncrypted, AesKey);
                         }
-                        //AlreadyReceived.Add(id);
-                        // send the acknowledgement
-                        // serialPort.Send(onWire.Take(8).ToArray(), 8, communicatingWith);
                     }
                     catch (Exception e)
                     {
@@ -588,8 +569,7 @@ namespace LPH_Edit_Viewer
                 {
                     DebugWriter.WriteDebug($"(probably reading datagram from client, this is viewer) exception = {e}");
                 }
-            }
-            ;
+            };
             // ======= ПОТОК ЧТЕНИЯ (только читаем) =======
             _ = Task.Run(async delegate ()
             {
@@ -1155,7 +1135,7 @@ namespace LPH_Edit_Viewer
             if (config[1] == "virtual")
             {
                 DebugWriter.WriteDebug("Switching modes: tetronet will be using Virtual Modem to connect");
-                Modem = new VirtualModem(config[2], new());
+                Modem = new VirtualModem(config[2], new(), rawWs:config[3] == "websocket");
             }
             else if (config[1] == "ciocil")
             {

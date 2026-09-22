@@ -9,7 +9,7 @@ namespace LPH_Edit_Viewer
 #pragma warning disable CS0162 // Обнаружен недостижимый код
         public const bool ALLOW_DEBUG_OUTPUTS = false;
         public const bool ALLOW_ALL_DEBUG_OUTPUTS = true;
-        public const bool LOUD_EXCEPTIONS = true;
+        public const bool LOUD_EXCEPTIONS = false;
 
         public static void WriteDebug(object data, bool isImportant = false)
         {

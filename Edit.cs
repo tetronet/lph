@@ -20,7 +20,7 @@ namespace LPH_Edit_Viewer
     public partial class Edit : Form
     {
         // LPH stuff
-        private DiskStringBuilder outputExpression = new("./temp/editorTemp.tmp");
+        private DiskStringBuilder outputExpression = new($"./temp/editor-{Guid.NewGuid()}.tmp");
         // graphics
         //private object _renderQueueLock = new object();
         //private List<RenderObject> renderQueue = new List<RenderObject>();
@@ -736,6 +736,15 @@ namespace LPH_Edit_Viewer
                                 ReliableTetronetClient = new(Modem, new(options.SerialPortName), LPH_QUERY_TYPE, LPH_CONNECTION_ID, TIMEOUT_MS * 10000);
                                 ReliableTetronetClient.TicksPacketDelay = (int)(10000000d / options.DataBitrate);
                                 usingTetronet = true;
+                                _ = Task.Run(async delegate ()
+                                {
+                                    while (true)
+                                    {
+                                        Debug.WriteLine($"Currently there are {ReliableTetronetClient.CountReorderingPackets()} packets in the reordeing buffer");
+                                        Debug.WriteLineIf(ReliableTetronetClient.AreAllPacketsFromReorderingBufferIncludedInAlreadyReceived(), "All packets in the ReordBuf were received at some point");
+                                        await Task.Delay(1000);
+                                    }
+                                });
                             }//);
                         }
                         else
@@ -902,67 +911,14 @@ namespace LPH_Edit_Viewer
                     {
                         if (!actuallyEncrypting)
                         {
-                            // not enough bytes to parse this datagram
-                            /*if (onWire.Length < 8)
-                            {
-                                return;
-                            }
-                            // 8 bytes, this is an ack
-                            if (onWire.Length == 8)
-                            {
-                                ulong idForDeleting = BinaryPrimitives.ReadUInt64BigEndian(onWire);
-                                PendingForAcknowledgement.TryRemove(idForDeleting, out _);
-                                PendingForAcknowledgementData.TryRemove(idForDeleting, out _);
-                            }*/
-                            // >8 bytes, this is a datagram, that is carrying a command
-                            // if (onWire.Length > 8)
-                            // read data
-                            //ulong packNoReceived = BinaryPrimitives.ReadUInt64BigEndian(onWire.Take(8).ToArray());
-                            //Console.WriteLine($"received packet #{packNoReceived}");
-                            //if (!AlreadyReceived.Contains(packNoReceived))
-                            /*if (packNoReceived != LastPacketNoReceived + 1)
-                            {
-                                ReorderingBuffer.TryAdd(packNoReceived, onWire.Skip(8).ToArray());
-                                return;
-                            }*/
                             // read payload for this lph datagram
                             dataReceived = Encoding.UTF8.GetString([.. onWire]);
-                            // put this packet no to list to prevent reading this package more than 1 time
-                            /*AlreadyReceived.Add(packNoReceived);
-                            // increment the reading index
-                            LastPacketNoReceived++;*/
-                            // transmit ack
-                            // serialPort.Send(onWire.Take(8).ToArray(), 8, communicatingWith);
                         }
                         else
                         {
-                            /*// not enough bytes to parse this datagram
-                            if (onWire.Length < 8)
-                            {
-                                return;
-                            }
-                            // 8 bytes, this is an ack
-                            if (onWire.Length == 8)
-                            {
-                                ulong idForDeleting = BinaryPrimitives.ReadUInt64BigEndian(onWire);
-                                PendingForAcknowledgement.TryRemove(idForDeleting, out _);
-                                PendingForAcknowledgementData.TryRemove(idForDeleting, out _);
-                            }
-                            // >8 bytes, this is a datagram, that is carrying a command
-                            if (onWire.Length > 8)
-                            {*/
-                            // read data
-                            //ulong packNoReceived = BinaryPrimitives.ReadUInt64BigEndian(onWire.Take(8).ToArray());
-                            //if (!AlreadyReceived.Contains(packNoReceived))
                             // read payload for this lph datagram
                             byte[] receivedEncrypted = onWire;
                             dataReceived = Aes256Helper.Decrypt(receivedEncrypted, AesKey);
-                            /*// put this packet no to list to prevent reading this package more than 1 time
-                            AlreadyReceived.Add(packNoReceived);
-                            // increment the reading index
-                            LastPacketNoReceived++;*/
-                            // transmit ack
-                            // serialPort.Send(onWire.Take(8).ToArray(), 8, communicatingWith);
                         }
 
                     }
@@ -1321,14 +1277,6 @@ namespace LPH_Edit_Viewer
                         dataBytes.CopyTo(dataToSend, 4);
                         BinaryPrimitives.WriteInt32BigEndian(dataToSend, dataBytes.Length);
                         UnivWrite(dataToSend);
-                        /*byte[] dataAndPackNO = new byte[8 + d.Length];
-                        Span<byte> packNoBytes = new byte[8];
-                        BinaryPrimitives.WriteUInt64BigEndian(packNoBytes, CurrentPacketNo);
-                        Array.Copy(packNoBytes.ToArray(), dataAndPackNO, 8);
-                        Array.Copy(d, 0, dataAndPackNO, 8, d.Length);
-                        serialPort.Send(dataAndPackNO, dataAndPackNO.Length, communicatingWith);
-                        PendingForAcknowledgementData.TryAdd(CurrentPacketNo, d);*/
-                        //Console.WriteLine("editor successfully sent unencrypted datagram");
                     }
                     else
                     {
@@ -1337,11 +1285,7 @@ namespace LPH_Edit_Viewer
                         encrypted.CopyTo(dataToSend, 4);
                         BinaryPrimitives.WriteInt32BigEndian(dataToSend, encrypted.Length);
                         UnivWrite(dataToSend);
-                        //PendingForAcknowledgementData.TryAdd(CurrentPacketNo, ivdenc.Skip(8).ToArray());
-                        //Console.WriteLine("editor successfully sent encrypted datagram");
                     }
-                    //PendingForAcknowledgement.TryAdd(CurrentPacketNo, DateTime.Now.Ticks);
-                    //CurrentPacketNo++;
                     lastpkttx = DateTime.Now.Ticks;
                 }
                 catch (Exception e)
@@ -1718,12 +1662,6 @@ namespace LPH_Edit_Viewer
             // measure time because whyn't?
             Stopwatch stopwatch = Stopwatch.StartNew();
             string[] config = File.ReadAllLines("tetronet.txt");
-            Address wantedAddress = new();
-            // check if we could load our local address from a file
-            if (File.Exists("ci_address_editor.txt"))
-            {
-                wantedAddress = new Address(File.ReadAllText("ci_address_editor.txt"));
-            }
             // check config header
             if (config[0] != "tetronet")
             {
@@ -1734,7 +1672,7 @@ namespace LPH_Edit_Viewer
             if (config[1] == "virtual")
             {
                 DebugWriter.WriteDebug("Switching modes: tetronet will be using Virtual Modem to connect");
-                Modem = new VirtualModem(config[2], new(wantedAddress, false, null));
+                Modem = new VirtualModem(config[2], new(), rawWs: config[3] == "websocket");
                 CHUNK_SIZE = 8000;
             }
             else if (config[1] == "ciocil")
