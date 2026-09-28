@@ -1140,7 +1140,7 @@ namespace LPH_Edit_Viewer
             else if (config[1] == "ciocil")
             {
                 DebugWriter.WriteDebug("Switching modes: tetronet will be using Low Latency Physical Modem to connect");
-                Modem = new LowLatencyPhysicalModem(config[2].Split(' ')[0], int.Parse(config[2].Split(' ')[1]), L1Types.L1_SERIAL, true);
+                Modem = new LowLatencyPhysicalModem(config[2].Split(' ')[0], int.Parse(config[2].Split(' ')[1]), config[3] == "serport" ? L1Types.L1_SERIAL : L1Types.L1_INET_TCP, true);
             }
             else
             {
