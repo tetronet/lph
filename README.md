@@ -1,5 +1,7 @@
 # Line Picture Host (LPH)
-It's a light-weight and fast working GDI+ based vector drawing program. No premium, no payments, no "cloud integrations" it just works.
+It's a light-weight and fast working GDI+ based vector drawing program. No premium, no payments, no "cloud integrations" it just works. Real tests were done on my **Ryzen 9 5950x**:\
+Lines - ~400000 per second\
+Points - ~800000 per second
 
 ### Setup process
 It's very straight forward, just open the program, press "Create new LPH file" and draw.
