@@ -11,6 +11,7 @@ namespace LPH_Edit_Viewer
     {
         private List<PolylineObject> output = new List<PolylineObject>(); 
         private Dictionary<Guid, PendingPolylineAssembly> pending = new Dictionary<Guid, PendingPolylineAssembly>();
+        private readonly object _lock = new();
 
         public PolylineAssembler()
         {
@@ -23,39 +24,71 @@ namespace LPH_Edit_Viewer
         /// <returns>Was receive succesful</returns>
         public bool ReceiveData(string data)
         {
-            Console.WriteLine("[total " + output.Count + "] polyline asm received: " + data);
-            string[] dataSplit = data.Split(' ');
-            if (data.StartsWith("pld")) // PolyLine Data
+            // one network packet may carry several objects (e.g. a triangle), feed them line by line
+            if (data.Contains('\n'))
             {
-                if (Guid.TryParse(dataSplit[1], out Guid g)
-                    && pending.TryGetValue(g, out PendingPolylineAssembly polyline))
+                bool anyReceived = false;
+                foreach (string line in data.Split('\n'))
                 {
-                    Console.WriteLine("pld" + dataSplit[2]);
-                    polyline.Fragments.Add(ulong.Parse(dataSplit[2]), data);
-                    if (dataSplit[3] == "last")
+                    if (line.Trim().Length != 0)
                     {
-                        Console.WriteLine("pld/last");
-                        polyline.TotalCount = ulong.Parse(dataSplit[2]) + 1;
-                        if (polyline.Fragments.Count == (int)polyline.TotalCount)
+                        anyReceived |= ReceiveData(line);
+                    }
+                }
+                return anyReceived;
+            }
+            data = data.Trim();
+            string[] dataSplit = data.Split(' ');
+            lock (_lock)
+            {
+                if (data.StartsWith("pld")) // PolyLine Data
+                {
+                    if (Guid.TryParse(dataSplit[1], out Guid g)
+                        && pending.TryGetValue(g, out PendingPolylineAssembly? polyline))
+                    {
+                        ulong seq = ulong.Parse(dataSplit[2]);
+                        polyline.Fragments[seq] = data;
+                        if (dataSplit[3] == "last")
                         {
-                            Console.WriteLine("pld/last/totalCountCheck: " + polyline.Fragments.Count);
+                            polyline.TotalCount = seq + 1;
+                        }
+                        // fragments may come in any order, so check for completion on every fragment
+                        if (polyline.TotalCount != 0 && (ulong)polyline.Fragments.Count >= polyline.TotalCount)
+                        {
                             output.Add(Assemble(polyline));
                             pending.Remove(g);
                         }
+                        return true;
                     }
-                    return true;
                 }
-            }
-            else if (data.StartsWith("polyline"))
-            {
-                if (Guid.TryParse(dataSplit[4], out Guid guid))
+                else if (data.StartsWith("polyline"))
                 {
-                    Console.WriteLine("polyline");
-                    pending.Add(guid, new PendingPolylineAssembly(Color.FromArgb((int)(decimal.Parse(dataSplit[1]) * 255), (int)(decimal.Parse(dataSplit[2]) * 255), (int)(decimal.Parse(dataSplit[3]) * 255))));
-                    return true;
+                    if (Guid.TryParse(dataSplit[4], out Guid guid))
+                    {
+                        pending[guid] = new PendingPolylineAssembly(Color.FromArgb((int)(Helpers.ParseDecimal(dataSplit[1]) * 255), (int)(Helpers.ParseDecimal(dataSplit[2]) * 255), (int)(Helpers.ParseDecimal(dataSplit[3]) * 255)));
+                        return true;
+                    }
                 }
             }
             return false;
+        }
+        /// <summary>
+        /// Atomically takes the first parsed PLD-style polyline from the buffer.
+        /// </summary>
+        /// <returns>true if a polyline was taken, otherwise - false</returns>
+        public bool TryTakePolyline(out PolylineObject polyline)
+        {
+            lock (_lock)
+            {
+                if (output.Count == 0)
+                {
+                    polyline = null!;
+                    return false;
+                }
+                polyline = output[0];
+                output.RemoveAt(0);
+                return true;
+            }
         }
         /// <summary>
         /// Returns first parsed PLD-style polyline in the buffer and fails with exceptions if there's no polylines available.
@@ -63,8 +96,10 @@ namespace LPH_Edit_Viewer
         public PolylineObject AvailablePolyline {
             get
             {
-                PolylineObject r = output.First();
-                output.RemoveAt(0);
+                if (!TryTakePolyline(out PolylineObject r))
+                {
+                    throw new InvalidOperationException("no polylines available");
+                }
                 return r;
             }
         }
@@ -74,7 +109,10 @@ namespace LPH_Edit_Viewer
         public bool Available {
             get
             {
-                return output.Count != 0;
+                lock (_lock)
+                {
+                    return output.Count != 0;
+                }
             }
         }
 

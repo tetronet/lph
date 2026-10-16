@@ -44,13 +44,13 @@ namespace LPH_Edit_Viewer
                             string toAppend = "";
                             if (parts[0] == "line")
                             {
-                                decimal x1 = decimal.Parse(parts[1]);
-                                decimal y1 = decimal.Parse(parts[2]);
-                                decimal x2 = decimal.Parse(parts[3]);
-                                decimal y2 = decimal.Parse(parts[4]);
-                                decimal r = decimal.Parse(parts[5]);
-                                decimal g = decimal.Parse(parts[6]);
-                                decimal b = decimal.Parse(parts[7]);
+                                decimal x1 = Helpers.ParseDecimal(parts[1]);
+                                decimal y1 = Helpers.ParseDecimal(parts[2]);
+                                decimal x2 = Helpers.ParseDecimal(parts[3]);
+                                decimal y2 = Helpers.ParseDecimal(parts[4]);
+                                decimal r = Helpers.ParseDecimal(parts[5]);
+                                decimal g = Helpers.ParseDecimal(parts[6]);
+                                decimal b = Helpers.ParseDecimal(parts[7]);
                                 toAppend = $"line " +
                                     $"{x1.ToString($"f{numericUpDown1.Value}")} " +
                                     $"{y1.ToString($"f{numericUpDown1.Value}")} " +
@@ -62,11 +62,11 @@ namespace LPH_Edit_Viewer
                             }
                             else if (parts[0] == "point")
                             {
-                                decimal x = decimal.Parse(parts[1]);
-                                decimal y = decimal.Parse(parts[2]);
-                                decimal r = decimal.Parse(parts[3]);
-                                decimal g = decimal.Parse(parts[4]);
-                                decimal b = decimal.Parse(parts[5]);
+                                decimal x = Helpers.ParseDecimal(parts[1]);
+                                decimal y = Helpers.ParseDecimal(parts[2]);
+                                decimal r = Helpers.ParseDecimal(parts[3]);
+                                decimal g = Helpers.ParseDecimal(parts[4]);
+                                decimal b = Helpers.ParseDecimal(parts[5]);
                                 toAppend = $"point " +
                                     $"{x.ToString($"f{numericUpDown1.Value}")} " +
                                     $"{y.ToString($"f{numericUpDown1.Value}")} " +

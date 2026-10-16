@@ -1,4 +1,5 @@
 ﻿using System.Drawing.Imaging;
+using System.Globalization;
 
 namespace LPH_Edit_Viewer
 {
@@ -38,19 +39,18 @@ namespace LPH_Edit_Viewer
             }
             return result;
         }
+        /// <summary>
+        /// Parses a number from LPH data independently of the system locale. Accepts both '.' and ',' as the decimal separator,
+        /// because older LPH versions wrote numbers using the current culture (e.g. "12,5" on Russian Windows).
+        /// </summary>
+        public static decimal ParseDecimal(string s)
+        {
+            return decimal.Parse(s.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
+
         public static void CancelActionSafe(DiskStringBuilder dsb)
         {
-            string deleted = "";
-            dsb.TruncateFromEndBefore('\r', out _);
-            dsb.TruncateFromEndBefore('\n', out deleted);
-            DebugWriter.WriteDebug("CancelActionSafe deleted this 1 : " + deleted);
-            while (deleted.StartsWith("pld"))
-            {
-                dsb.TruncateFromEndBefore('\r', out _);
-                dsb.TruncateFromEndBefore('\n', out deleted);
-                DebugWriter.WriteDebug("CancelActionSafe deleted this 2 : " + deleted);
-            }
-            dsb.Append("\n");
+            dsb.RemoveLastObject();
         }
     }
 }

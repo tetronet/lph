@@ -15,7 +15,7 @@ namespace LPH_Edit_Viewer
 
         public static PointM FromStrings(string x, string y)
         {
-            return new PointM(decimal.Parse(x), decimal.Parse(y));
+            return new PointM(Helpers.ParseDecimal(x), Helpers.ParseDecimal(y));
         }
 
         public override string ToString()

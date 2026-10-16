@@ -38,6 +38,8 @@ namespace LPH_Edit_Viewer
         private Graphics tempGraphics;
         private Graphics overlayGraphics;
         private Bitmap pictureOnScreen;
+        // pictureOnScreen and tempGraphics belong to it; the fast loader writes its pixels directly
+        private PixelCanvas canvas;
         private Bitmap overlayBitmap;
         private SelectedInstrument instrument = SelectedInstrument.None;
         private Guid currentPolylineUuid = Guid.Empty;
@@ -53,6 +55,7 @@ namespace LPH_Edit_Viewer
         private int CHUNK_SIZE = 8000;
         private const uint LPH_CONNECTION_ID = 125000000;
         private const string LPH_QUERY_TYPE = "lphrp";
+        private Stopwatch? keepaliveStopWatch = null;
         //private UdpClient serialPort = new UdpClient();
         private object transmissionLock = new object();
         private IPEndPoint? communicatingWith;
@@ -81,16 +84,21 @@ namespace LPH_Edit_Viewer
         private ConcurrentDictionary<ulong, byte[]> ReorderingBuffer = new ConcurrentDictionary<ulong, byte[]>();
         private ConcurrentDictionary<ulong, byte[]> PendingForAcknowledgementData = new ConcurrentDictionary<ulong, byte[]>();*/
         private TcpClient? serialPort = null;
-        private List<byte> receiveBuffer = [];
-        private object _receiveBufferLock = new();
+        private readonly PacketReceiveBuffer receiveBuffer = new(64 * 1024 * 1024)
+        {
+            OnInvalidLength = length => DebugWriter.WriteDebug($"editor - invalid packet length {length}, dropping buffered data"),
+            OnOversizedPacket = length => DebugWriter.WriteDebug($"editor - packet of {length} bytes is too long, skipped")
+        };
+        private bool packetProcessorStarted = false;
         public Edit(string filename, bool whatIsCarried)
         {
             InitializeComponent();
             graphics = panel1.CreateGraphics();
-            pictureOnScreen = new Bitmap(panel1.Width, panel1.Height);
+            canvas = new PixelCanvas(panel1.Width, panel1.Height);
+            pictureOnScreen = canvas.Bitmap;
             overlayBitmap = new Bitmap(panel1.Width, panel1.Height);
             overlayGraphics = Graphics.FromImage(overlayBitmap);
-            tempGraphics = Graphics.FromImage(pictureOnScreen);
+            tempGraphics = canvas.Graphics;
             if (whatIsCarried)
             {
                 if (filename != "")
@@ -98,6 +106,8 @@ namespace LPH_Edit_Viewer
                     if (!outputExpression.Init(filename))
                     {
                         Interaction.MsgBox("Failed to open this file", MsgBoxStyle.Critical, "Tsu-k Interruptive Window");
+                        // continue with an empty drawing instead of an uninitialized buffer
+                        outputExpression.Init();
                     }
                 }
                 else
@@ -116,23 +126,33 @@ namespace LPH_Edit_Viewer
                     outputExpression.Append(filename);
                 }
             }
+            // an opened file or an empty drawing has nothing to lose yet, data carried from the Viewer was never saved
+            hostSaved = whatIsCarried;
+            outputExpression.AttachGenericModificationEvent(() => hostSaved = false);
             Task.Run(async delegate ()
             {
-                while (true)
+                while (alive)
                 {
-                    if (polylineAsm.Available)
+                    try
                     {
-                        receivedPolylinesCount++;
-                        DebugWriter.WriteDebug("drawn polylines: " + receivedPolylinesCount);
-                        lock (_renderLock)
+                        if (polylineAsm.TryTakePolyline(out PolylineObject polyline))
                         {
-                            //renderQueue.Add(polylineAsm.AvailablePolyline);
-                            polylineAsm.AvailablePolyline.Draw(tempGraphics, new Rectangle(Point.Empty, panel1.Size));
+                            receivedPolylinesCount++;
+                            DebugWriter.WriteDebug("drawn polylines: " + receivedPolylinesCount);
+                            lock (_renderLock)
+                            {
+                                //renderQueue.Add(polylineAsm.AvailablePolyline);
+                                polyline.Draw(tempGraphics, new Rectangle(Point.Empty, panel1.Size));
+                            }
+                        }
+                        else
+                        {
+                            await Task.Delay(100);
                         }
                     }
-                    else
+                    catch (Exception e)
                     {
-                        await Task.Delay(100);
+                        DebugWriter.ReceiveException("editor - polyline render loop", e);
                     }
                 }
             });
@@ -178,108 +198,16 @@ namespace LPH_Edit_Viewer
             if (!isRedrawing)
             {
                 isRedrawing = true;
-                long idx = 0;
-                while (true)
+                try
                 {
-                    idx = outputExpression.ReadBefore('\n', idx, out string shape);
-                    string[] shapeData = shape.Split(' ');
-                    switch (shapeData[0])
-                    {
-                        case "point":
-                            try
-                            {
-                                decimal x_percent_point = decimal.Parse(shapeData[1]);
-                                decimal y_percent_point = decimal.Parse(shapeData[2]);
-                                int x_point = (int)(panel1.Width * x_percent_point / 100);
-                                int y_point = (int)(panel1.Height * y_percent_point / 100);
-                                Color shapeColor = Color.FromArgb((int)(decimal.Parse(shapeData[3] ?? "0") * 255), (int)(decimal.Parse(shapeData[4] ?? "0") * 255), (int)(decimal.Parse(shapeData[5] ?? "0") * 255));
-                                lock (_renderLock)
-                                {
-                                    tempGraphics.FillEllipse(new SolidBrush(shapeColor), x_point - 2, y_point - 2, 4, 4);
-                                }
-                                if (!isPresetLoaded && TransmitPictureToSerialPort)
-                                {
-                                    try
-                                    {
-                                        string dataToSend = shape + "\r\n";
-                                        Task.Run(() => Write(dataToSend));
-                                    }
-                                    catch
-                                    {
-                                        DebugWriter.WriteDebug("point was not transmitted");
-                                    }
-                                }
-                                //Console.WriteLine("draw point");
-                            }
-                            catch (Exception e)
-                            {
-                                DebugWriter.WriteDebug($"error when decoding point: {e}");
-                                DebugWriter.WriteDebug($"failed to decode this point: {shape}");
-                            }
-                            break;
-                        case "line":
-                            try
-                            {
-                                decimal x_percent_line = decimal.Parse(shapeData[1]);
-                                decimal y_percent_line = decimal.Parse(shapeData[2]);
-                                decimal x_end_percent_line = decimal.Parse(shapeData[3]);
-                                decimal y_end_percent_line = decimal.Parse(shapeData[4]);
-                                decimal red_color_line = decimal.Parse(shapeData[5] ?? "0");
-                                decimal green_color_line = decimal.Parse(shapeData[6] ?? "0");
-                                decimal blue_color_line = decimal.Parse(shapeData[7] ?? "1");
-                                int x_line = (int)(panel1.Width * x_percent_line / 100);
-                                int y_line = (int)(panel1.Height * y_percent_line / 100);
-                                int x_end_line = (int)(panel1.Width * x_end_percent_line / 100);
-                                int y_end_line = (int)(panel1.Height * y_end_percent_line / 100);
-                                int red_line = (int)(red_color_line * 255);
-                                int green_line = (int)(green_color_line * 255);
-                                int blue_line = (int)(blue_color_line * 255);
-                                lock (_renderLock)
-                                {
-                                    tempGraphics.DrawLine(new Pen(Color.FromArgb(red_line, green_line, blue_line)), x_line, y_line, x_end_line, y_end_line);
-                                }
-                                if (!isPresetLoaded && TransmitPictureToSerialPort)
-                                {
-                                    try
-                                    {
-                                        string dataToSend = shape + "\r\n";
-                                        Task.Run(() => Write(dataToSend));
-                                    }
-                                    catch
-                                    {
-                                        DebugWriter.WriteDebug("line was not transmitted");
-                                    }
-                                }
-                                //Console.WriteLine("draw line");
-                            }
-                            catch (Exception e)
-                            {
-                                DebugWriter.WriteDebug($"error when decoding line: {e}");
-                                DebugWriter.WriteDebug($"failed to decode this line: {shape}");
-                                DebugWriter.WriteDebug("this object will be disposed");
-                                outputExpression.RemoveString(shape);
-                            }
-                            break;
-                        case "polyline":
-                        case "pld":
-                            try
-                            {
-                                polylineAsm.ReceiveData(shape);
-                            }
-                            catch (Exception e)
-                            {
-                                DebugWriter.WriteDebug($"error when decoding this polyline/pld: {e}");
-                                DebugWriter.WriteDebug($"failed to decode this polyline/pld: {shape}");
-                            }
-                            break;
-                    }
-                    if (idx >= outputExpression.GetTotalLength())
-                    {
-                        break;
-                    }
+                    using Stream snapshot = outputExpression.OpenSnapshotReader(out long length);
+                    FastLphLoader.Render(snapshot, length, canvas, _renderLock, defaultColorWhenMissing: false);
                 }
-                isPresetLoaded = true;
-                isRedrawing = false;
+                finally
+                {
+                    isPresetLoaded = true;
+                    isRedrawing = false;
+                }
             }
         }
 
@@ -500,12 +428,15 @@ namespace LPH_Edit_Viewer
                         {
                             int topPointX = (clickPos.X + e.X) / 2;
                             decimal topPointXpercent = (decimal)topPointX / panel1.Width * 100;
-                            tempGraphics.DrawLines(new Pen(currentColor), new Point[] {
-                                new(topPointX, clickPos.Y),
-                                e.Location,
-                                new(clickPos.X, e.Y),
-                                new(topPointX, clickPos.Y)
-                            });
+                            lock (_renderLock)
+                            {
+                                tempGraphics.DrawLines(new Pen(currentColor), new Point[] {
+                                    new(topPointX, clickPos.Y),
+                                    e.Location,
+                                    new(clickPos.X, e.Y),
+                                    new(topPointX, clickPos.Y)
+                                });
+                            }
                             Guid trianglePolylineGuid = Guid.NewGuid();
                             string triangleData = $"polyline {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255} {trianglePolylineGuid}\n" +
                                 $"pld {trianglePolylineGuid} 0 notLast {topPointXpercent} {(decimal)clickPos.Y / panel1.Height * 100}\n" +
@@ -533,16 +464,34 @@ namespace LPH_Edit_Viewer
 
         private void button7_Click(object? sender, EventArgs? e)
         {
-            if (saveFileDialog1.ShowDialog() == DialogResult.OK)
+            SaveDrawing();
+        }
+
+        /// <returns>true if the drawing was saved, false if the user cancelled or saving failed</returns>
+        private bool SaveDrawing()
+        {
+            if (saveFileDialog1.ShowDialog() != DialogResult.OK)
+            {
+                return false;
+            }
+            try
             {
                 outputExpression.Flush(saveFileDialog1.FileName);
+                hostSaved = true;
                 File.AppendAllText("Recent.text", saveFileDialog1.FileName + "\n");
-                if (polylineTempContainer.Length != 0)
-                {
-                    throw new Exception("debug");
-                }
-                Task.Run(delegate () { MessageBox.Show("Successfuly saved file!"); });
             }
+            catch (Exception ex)
+            {
+                if (!hostSaved)
+                {
+                    MessageBox.Show("Failed to save the file: " + ex.Message, "Tsu-k Executive", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return false;
+                }
+                // the drawing itself was saved, only the recent files list failed
+                DebugWriter.ReceiveException("editor - updating Recent.text", ex);
+            }
+            Task.Run(delegate () { MessageBox.Show("Successfuly saved file!"); });
+            return true;
         }
 
         private void button8_Click(object sender, EventArgs e)
@@ -640,7 +589,7 @@ namespace LPH_Edit_Viewer
         {
             try
             {
-                outputExpression.TruncateFromEndBefore('\n', out _);
+                outputExpression.RemoveLastObject();
                 lock (_renderLock)
                 {
                     if (!isRedrawing)
@@ -736,13 +685,23 @@ namespace LPH_Edit_Viewer
                                 ReliableTetronetClient = new(Modem, new(options.SerialPortName), LPH_QUERY_TYPE, LPH_CONNECTION_ID, TIMEOUT_MS * 10000);
                                 ReliableTetronetClient.TicksPacketDelay = (int)(10000000d / options.DataBitrate);
                                 usingTetronet = true;
+                                keepaliveStopWatch = Stopwatch.StartNew();
                                 _ = Task.Run(async delegate ()
                                 {
                                     while (true)
                                     {
-                                        Debug.WriteLine($"Currently there are {ReliableTetronetClient.CountReorderingPackets()} packets in the reordeing buffer");
-                                        Debug.WriteLineIf(ReliableTetronetClient.AreAllPacketsFromReorderingBufferIncludedInAlreadyReceived(), "All packets in the ReordBuf were received at some point");
-                                        await Task.Delay(1000);
+                                        //Debug.WriteLine($"Currently there are {ReliableTetronetClient.CountReorderingPackets()} packets in the reordeing buffer");
+                                        //Debug.WriteLineIf(ReliableTetronetClient.AreAllPacketsFromReorderingBufferIncludedInAlreadyReceived(), "All packets in the ReordBuf were received at some point");
+                                        if (!IsConnectionActive)
+                                        {
+                                            continue;
+                                        }
+                                        if (keepaliveStopWatch.ElapsedMilliseconds > 10000)
+                                        {
+                                            MessageBox.Show("It seems like the remote side is not working, since there was no keep-alives in 10s. Normally, each keep-alive is sent in 5s interval, so if there's no keep-alives, this can mean that you drawing wasn't properly transmitted to the remote side. Very recommended to save it locally to prevent data loss.", "Tsu-k Interruptive Window", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                            await Task.Delay(30000);
+                                        }
+                                        await Task.Delay(100);
                                     }
                                 });
                             }//);
@@ -934,42 +893,42 @@ namespace LPH_Edit_Viewer
                     DebugWriter.WriteDebug($"(probably reading datagram from server, this is editor) exception = {e}");
                 }
             }
+            // новое соединение: недочитанный хвост старого не должен склеиться с новыми данными
+            receiveBuffer.Reset();
             // ======= ПОТОК ЧТЕНИЯ (только читаем) =======
             Task.Run(async delegate ()
             {
                 if (!usingTetronet)
                 {
-                    if (serialPort == null)
+                    // запоминаем именно это соединение: при переподключении serialPort заменится на новый объект
+                    TcpClient? client = serialPort;
+                    if (client == null)
                     {
                         throw new NullReferenceException("serialPort was null.");
                     }
-                    var stream = serialPort.GetStream(); // предполагаю, что это NetworkStream
+                    var stream = client.GetStream(); // предполагаю, что это NetworkStream
                     byte[] buffer = new byte[8192]; // буфер для чтения
 
-                    while (true)
+                    while (alive)
                     {
                         try
                         {
-                            if (!serialPort.Connected)
+                            if (!client.Connected)
                             {
                                 break; // сокет закрыт
                             }
                             // Читаем БЛОКОМ, а не по Available
                             int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                            //if (bytesRead == 0) break; 
+                            if (bytesRead == 0) break; // сокет закрыт удалённой стороной
 
-                            
-
-                            lock (_receiveBufferLock)
-                            {
-                                // Добавляем ТОЛЬКО прочитанные байты
-                                receiveBuffer.AddRange(buffer.Take(bytesRead));
-                            }
+                            // если обработка не успевает, Write подождёт, и TCP сам притормозит отправителя
+                            receiveBuffer.Write(buffer.AsSpan(0, bytesRead));
                         }
                         catch (Exception e)
                         {
+                            // ошибка чтения TCP-потока не лечится повтором: соединение уже мертво
                             DebugWriter.ReceiveException("Read thread", e);
-                            await Task.Delay(1000);
+                            break;
                         }
                     }
                 }
@@ -981,67 +940,30 @@ namespace LPH_Edit_Viewer
                     }
                     ReliableTetronetClient.OnMessageReceived += delegate (SRTPClient sender, byte[] data)
                     {
-                        lock (_receiveBufferLock)
-                        {
-                            receiveBuffer.AddRange(data);
-                        }
+                        // если обработка не успевает, Write подождёт: SRTP перестанет подтверждать пакеты и отправитель притормозит
+                        receiveBuffer.Write(data);
                         DebugWriter.WriteDebug($"editor SRTP received {data.Length} bytes of data");
                     };
                 }
             });
 
             // ======= ПОТОК ОБРАБОТКИ (разбираем пакеты) =======
+            // один на всё окно: два обработчика разбирали бы один и тот же буфер вперемешку
+            if (packetProcessorStarted)
+            {
+                return;
+            }
+            packetProcessorStarted = true;
             Task.Run(delegate ()
             {
-                while (true)
+                while (alive)
                 {
                     try
                     {
-                        // ВСЮ проверку делаем внутри одного lock, без continue внутри!
-                        int packetLength = 0;
-                        bool hasPacket = false;
-                        byte[]? onWire = null;
-
-                        lock (_receiveBufferLock)
+                        // ждём пакет (без опроса раз в 1 мс); таймаут нужен, чтобы заметить закрытие окна
+                        if (receiveBuffer.TryTake(out byte[] onWire, 100))
                         {
-                            // Проверяем, хватает ли данных для чтения длины (4 байта)
-                            if (receiveBuffer.Count >= 4)
-                            {
-                                // Читаем длину БЕЗ создания копии всего буфера
-                                packetLength = (receiveBuffer[0] << 24) | (receiveBuffer[1] << 16) |
-                                               (receiveBuffer[2] << 8) | receiveBuffer[3];
-
-                                // Проверяем, хватает ли данных для всего пакета
-                                if (receiveBuffer.Count >= packetLength + 4)
-                                {
-                                    // Копируем ТОЛЬКО тело пакета
-                                    onWire = [.. receiveBuffer.Skip(4).Take(packetLength)];
-                                    receiveBuffer.RemoveRange(0, packetLength + 4);
-                                    hasPacket = true;
-                                }
-                            }
-                        } // Блокировка ЗДЕСЬ освобождается!
-
-                        // Обработка ВНЕ блокировки, чтобы не тормозить чтение
-                        if (hasPacket)
-                        {
-                            if (packetLength > 1073741824)
-                            {
-                                Interaction.MsgBox($"Length is bigger than 1 gigabyte (how your pc is still alive at this point)... Packet says {packetLength} bytes.",
-                                                   MsgBoxStyle.OkOnly, "Tsu-k Interruptive Window");
-                            }
-                            else
-                            {
-                                if (onWire != null)
-                                {
-                                    OnMessageReceived(onWire);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Если пакета нет - ждем 1 мс, чтобы не грузить процессор
-                            Thread.Sleep(1); // или await Task.Delay(1) если метод async
+                            OnMessageReceived(onWire);
                         }
                     }
                     catch (Exception e)
@@ -1247,7 +1169,7 @@ namespace LPH_Edit_Viewer
             {
                 pathInt.Add(path[i].ToPoint(panel1.Width, panel1.Height));
             }
-            Color polylineColor = Color.FromArgb((int)(decimal.Parse(data.Split(' ')[1]) * 255), (int)(decimal.Parse(data.Split(' ')[2]) * 255), (int)(decimal.Parse(data.Split(' ')[3]) * 255));
+            Color polylineColor = Color.FromArgb((int)(Helpers.ParseDecimal(data.Split(' ')[1]) * 255), (int)(Helpers.ParseDecimal(data.Split(' ')[2]) * 255), (int)(Helpers.ParseDecimal(data.Split(' ')[3]) * 255));
             tempGraphics.DrawLines(new Pen(polylineColor), pathInt.ToArray());
         }*/
 
@@ -1336,8 +1258,12 @@ namespace LPH_Edit_Viewer
                 MsgBoxResult userResponse = Interaction.MsgBox("Closing the Editor while image is modified and not saved will result in data loss. Save?", MsgBoxStyle.YesNoCancel, "Tsu-k Interruptive Window");
                 if (userResponse == MsgBoxResult.Yes)
                 {
-                    button7_Click(null, null); // virtually press the "Save..." button
-
+                    if (!SaveDrawing())
+                    {
+                        // the user closed the save dialog (or saving failed): don't lose the drawing
+                        e.Cancel = true;
+                        return;
+                    }
                 }
                 else if (userResponse == MsgBoxResult.Cancel)
                 {
@@ -1346,6 +1272,7 @@ namespace LPH_Edit_Viewer
                 }
             }
             alive = false;
+            receiveBuffer.Close(); // отпускаем поток приёма, если он ждёт места в буфере
             try
             {
                 if (serialPort != null)
@@ -1387,10 +1314,14 @@ namespace LPH_Edit_Viewer
                 {
                     using (Graphics g = Graphics.FromImage(b))
                     {
-                        g.DrawImageUnscaled(pictureOnScreen, 0, 0);
-                        if (renderingOverlay)
+                        // pictureOnScreen and overlayBitmap are drawn on by background threads
+                        lock (_renderLock)
                         {
-                            g.DrawImageUnscaled(overlayBitmap, 0, 0);
+                            g.DrawImageUnscaled(pictureOnScreen, 0, 0);
+                            if (renderingOverlay)
+                            {
+                                g.DrawImageUnscaled(overlayBitmap, 0, 0);
+                            }
                         }
                         if (TransmitPictureToSerialPort)
                         {
@@ -1450,10 +1381,16 @@ namespace LPH_Edit_Viewer
         {
             Task.Run(async delegate ()
             {
-                overlayGraphics.Clear(Color.Transparent);
-                overlayGraphics.DrawString($"=== DEBUG INFO ABOUT LPH ===\nBufferSize: {(double)outputExpression.GetTotalLength() / 1048576}M", new Font("Times New Roman", 20), new SolidBrush(Color.Red), 10, 10);
+                lock (_renderLock)
+                {
+                    overlayGraphics.Clear(Color.Transparent);
+                    overlayGraphics.DrawString($"=== DEBUG INFO ABOUT LPH ===\nBufferSize: {(double)outputExpression.GetTotalLength() / 1048576}M", new Font("Times New Roman", 20), new SolidBrush(Color.Red), 10, 10);
+                }
                 await Task.Delay(1000);
-                overlayGraphics.Clear(Color.Transparent);
+                lock (_renderLock)
+                {
+                    overlayGraphics.Clear(Color.Transparent);
+                }
             });
         }
 
@@ -1488,12 +1425,12 @@ namespace LPH_Edit_Viewer
                         ViewersCursor cursor = new();
                         try
                         {
-                            cursor.MouseX = (int)(decimal.Parse(dataReceivedParts[1]) / 100 * panel1.Width);
-                            cursor.MouseY = (int)(decimal.Parse(dataReceivedParts[2]) / 100 * panel1.Height);
+                            cursor.MouseX = (int)(Helpers.ParseDecimal(dataReceivedParts[1]) / 100 * panel1.Width);
+                            cursor.MouseY = (int)(Helpers.ParseDecimal(dataReceivedParts[2]) / 100 * panel1.Height);
                             cursor.CursorColor = Color.FromArgb(
-                                (int)(decimal.Parse(dataReceivedParts[3]) * 255),
-                                (int)(decimal.Parse(dataReceivedParts[4]) * 255),
-                                (int)(decimal.Parse(dataReceivedParts[5]) * 255)
+                                (int)(Helpers.ParseDecimal(dataReceivedParts[3]) * 255),
+                                (int)(Helpers.ParseDecimal(dataReceivedParts[4]) * 255),
+                                (int)(Helpers.ParseDecimal(dataReceivedParts[5]) * 255)
                             );
                             cursor.CursorID = int.Parse(dataReceivedParts[6]);
                             cursor.MouseButton = int.Parse(dataReceivedParts[7]);
@@ -1507,11 +1444,11 @@ namespace LPH_Edit_Viewer
                     case "epoint":
                         try
                         {
-                            decimal x_percent_point = decimal.Parse(dataReceivedParts[1]);
-                            decimal y_percent_point = decimal.Parse(dataReceivedParts[2]);
+                            decimal x_percent_point = Helpers.ParseDecimal(dataReceivedParts[1]);
+                            decimal y_percent_point = Helpers.ParseDecimal(dataReceivedParts[2]);
                             int x_point = (int)(panel1.Width * x_percent_point / 100);
                             int y_point = (int)(panel1.Height * y_percent_point / 100);
-                            Color shapeColor = Color.FromArgb((int)(decimal.Parse(dataReceivedParts[3] ?? "0") * 255), (int)(decimal.Parse(dataReceivedParts[4] ?? "0") * 255), (int)(decimal.Parse(dataReceivedParts[5] ?? "0") * 255));
+                            Color shapeColor = Color.FromArgb((int)(Helpers.ParseDecimal(dataReceivedParts[3] ?? "0") * 255), (int)(Helpers.ParseDecimal(dataReceivedParts[4] ?? "0") * 255), (int)(Helpers.ParseDecimal(dataReceivedParts[5] ?? "0") * 255));
                             lock (_renderLock)
                             {
                                 tempGraphics.FillEllipse(new SolidBrush(shapeColor), x_point - 2, y_point - 2, 4, 4);
@@ -1531,9 +1468,9 @@ namespace LPH_Edit_Viewer
                                     0,
                                     y_percent_point,
                                     0,
-                                    decimal.Parse(dataReceivedParts[3] ?? "0"),
-                                    decimal.Parse(dataReceivedParts[4] ?? "0"),
-                                    decimal.Parse(dataReceivedParts[5] ?? "0")
+                                    Helpers.ParseDecimal(dataReceivedParts[3] ?? "0"),
+                                    Helpers.ParseDecimal(dataReceivedParts[4] ?? "0"),
+                                    Helpers.ParseDecimal(dataReceivedParts[5] ?? "0")
                                 ));
                             }*/
                             DebugWriter.WriteDebug("draw point");
@@ -1546,13 +1483,13 @@ namespace LPH_Edit_Viewer
                     case "eline":
                         try
                         {
-                            decimal x_percent_line = decimal.Parse(dataReceivedParts[1]);
-                            decimal y_percent_line = decimal.Parse(dataReceivedParts[2]);
-                            decimal x_end_percent_line = decimal.Parse(dataReceivedParts[3]);
-                            decimal y_end_percent_line = decimal.Parse(dataReceivedParts[4]);
-                            decimal red_color_line = decimal.Parse(dataReceivedParts[5] ?? "0");
-                            decimal green_color_line = decimal.Parse(dataReceivedParts[6] ?? "0");
-                            decimal blue_color_line = decimal.Parse(dataReceivedParts[7] ?? "1");
+                            decimal x_percent_line = Helpers.ParseDecimal(dataReceivedParts[1]);
+                            decimal y_percent_line = Helpers.ParseDecimal(dataReceivedParts[2]);
+                            decimal x_end_percent_line = Helpers.ParseDecimal(dataReceivedParts[3]);
+                            decimal y_end_percent_line = Helpers.ParseDecimal(dataReceivedParts[4]);
+                            decimal red_color_line = Helpers.ParseDecimal(dataReceivedParts[5] ?? "0");
+                            decimal green_color_line = Helpers.ParseDecimal(dataReceivedParts[6] ?? "0");
+                            decimal blue_color_line = Helpers.ParseDecimal(dataReceivedParts[7] ?? "1");
                             int x_line = (int)(panel1.Width * x_percent_line / 100);
                             int y_line = (int)(panel1.Height * y_percent_line / 100);
                             int x_end_line = (int)(panel1.Width * x_end_percent_line / 100);
@@ -1653,6 +1590,13 @@ namespace LPH_Edit_Viewer
                         break;
                     case "auth_error_login_unknown":
                         Task.Run(() => Interaction.MsgBox("Failed to connect due to unknown login", MsgBoxStyle.Critical, "Tsu-k Interruptive Window"));
+                        break;
+                    case "keep_alive_remote_copybook_drawing":
+                        Debug.WriteLine("Received a remote keep alive (from the Viewer)");
+                        keepaliveStopWatch?.Restart();
+                        break;
+                    default:
+                        Debug.WriteLine("Unknown packet name: " + dataReceivedParts[0].Trim());
                         break;
                 }
             }

@@ -64,11 +64,11 @@ namespace LPH_Edit_Viewer
                             case "point":
                                 try
                                 {
-                                    float x_percent_point = float.Parse(shapeData[1]);
-                                    float y_percent_point = float.Parse(shapeData[2]);
-                                    float r_pt = float.Parse(shapeData[3]);
-                                    float g_pt = float.Parse(shapeData[4]);
-                                    float b_pt = float.Parse(shapeData[5]);
+                                    float x_percent_point = (float)Helpers.ParseDecimal(shapeData[1]);
+                                    float y_percent_point = (float)Helpers.ParseDecimal(shapeData[2]);
+                                    float r_pt = (float)Helpers.ParseDecimal(shapeData[3]);
+                                    float g_pt = (float)Helpers.ParseDecimal(shapeData[4]);
+                                    float b_pt = (float)Helpers.ParseDecimal(shapeData[5]);
                                     string color_pt = $"#{(int)(r_pt * 255):X2}{(int)(g_pt * 255):X2}{(int)(b_pt * 255):X2}";
                                     outputSVG.Append($"<circle cx=\"{x_percent_point}\" cy=\"{y_percent_point}\" r=\"1\" fill=\"{color_pt}\"/>\n");
                                 }
@@ -80,13 +80,13 @@ namespace LPH_Edit_Viewer
                             case "line":
                                 try
                                 {
-                                    float x_percent_line = float.Parse(shapeData[1]);
-                                    float y_percent_line = float.Parse(shapeData[2]);
-                                    float x_end_percent_line = float.Parse(shapeData[3]);
-                                    float y_end_percent_line = float.Parse(shapeData[4]);
-                                    float r_ln = float.Parse(shapeData[5]);
-                                    float g_ln = float.Parse(shapeData[6]);
-                                    float b_ln = float.Parse(shapeData[7]);
+                                    float x_percent_line = (float)Helpers.ParseDecimal(shapeData[1]);
+                                    float y_percent_line = (float)Helpers.ParseDecimal(shapeData[2]);
+                                    float x_end_percent_line = (float)Helpers.ParseDecimal(shapeData[3]);
+                                    float y_end_percent_line = (float)Helpers.ParseDecimal(shapeData[4]);
+                                    float r_ln = (float)Helpers.ParseDecimal(shapeData[5]);
+                                    float g_ln = (float)Helpers.ParseDecimal(shapeData[6]);
+                                    float b_ln = (float)Helpers.ParseDecimal(shapeData[7]);
                                     string color_ln = $"#{(int)(r_ln * 255):X2}{(int)(g_ln * 255):X2}{(int)(b_ln * 255):X2}";
                                     outputSVG.Append($"<line x1=\"{x_percent_line}\" y1=\"{y_percent_line}\" x2=\"{x_end_percent_line}\" y2=\"{y_end_percent_line}\" stroke=\"{color_ln}\"/>\n");
                                 }

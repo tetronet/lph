@@ -143,13 +143,30 @@ namespace LPH_Edit_Viewer
                     outputBytes.Add((byte)read);
                 }
                 result = Encoding.UTF8.GetString(outputBytes.ToArray());
-
+                return fs.Position;
             }
-            return fs.Position;
+        }
+        /// <summary>
+        /// Opens a separate read-only stream over the buffer, so it can be read in big blocks without holding the lock.
+        /// Data appended after this call may or may not be visible; read only up to <paramref name="length"/>.
+        /// </summary>
+        /// <param name="length">Buffer length at the moment of the call</param>
+        public Stream OpenSnapshotReader(out long length)
+        {
+            lock (globalLock)
+            {
+                if (!isInited) throw new InvalidOperationException("not inited");
+                fs.Flush();
+                length = fs.Length;
+                return new FileStream(tempFileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
+            }
         }
         public long GetTotalLength()
         {
-            return fs.Length;
+            lock (globalLock)
+            {
+                return fs.Length;
+            }
         }
         /// <summary>
         /// Saves this String Builder string representation to it's origin file.
@@ -201,6 +218,7 @@ namespace LPH_Edit_Viewer
                 if (!isInited) throw new InvalidOperationException("not inited");
                 fs.SetLength(0);
                 fs.Position = 0;
+                MInvokeEvents();
             }
         }
         public long TruncateFromEndBefore(char eraseBefore, out string deleted)
@@ -334,23 +352,86 @@ namespace LPH_Edit_Viewer
         }
         public int CountChars(char c)
         {
-            long currentIndex = fs.Position;
-            fs.Position = 0;
-            int result = 0;
-            while (true)
+            lock (globalLock)
             {
-                int currentByte = fs.ReadByte();
-                if (currentByte == -1)
+                long currentIndex = fs.Position;
+                fs.Position = 0;
+                int result = 0;
+                while (true)
                 {
-                    break;
+                    int currentByte = fs.ReadByte();
+                    if (currentByte == -1)
+                    {
+                        break;
+                    }
+                    if (currentByte == c)
+                    {
+                        result++;
+                    }
                 }
-                if (currentByte == c)
+                fs.Position = currentIndex;
+                return result;
+            }
+        }
+        /// <summary>
+        /// Removes the last non-empty line (without touching the '\n' that ends the previous line), so the buffer always stays newline-terminated.
+        /// </summary>
+        /// <returns>Removed line without line terminators, or an empty string if the buffer was empty</returns>
+        public string RemoveLastLine()
+        {
+            lock (globalLock)
+            {
+                if (!isInited) throw new InvalidOperationException("not inited");
+
+                // skip trailing line terminators
+                long end = fs.Length;
+                while (end > 0)
                 {
-                    result++;
+                    fs.Position = end - 1;
+                    int b = fs.ReadByte();
+                    if (b != '\n' && b != '\r')
+                    {
+                        break;
+                    }
+                    end--;
+                }
+                // find the beginning of the last line
+                long start = end;
+                while (start > 0)
+                {
+                    fs.Position = start - 1;
+                    if (fs.ReadByte() == '\n')
+                    {
+                        break;
+                    }
+                    start--;
+                }
+                byte[] lineBytes = new byte[end - start];
+                fs.Position = start;
+                fs.ReadExactly(lineBytes, 0, lineBytes.Length);
+                fs.SetLength(start);
+                fs.Position = fs.Length;
+                MInvokeEvents();
+                return Encoding.UTF8.GetString(lineBytes);
+            }
+        }
+        /// <summary>
+        /// Removes the last drawn object. A polyline (its "polyline" header and all of its "pld" lines) is treated as one object.
+        /// </summary>
+        public void RemoveLastObject()
+        {
+            lock (globalLock)
+            {
+                string removed = RemoveLastLine();
+                while (removed.StartsWith("pld"))
+                {
+                    removed = RemoveLastLine();
+                    if (removed.Length == 0)
+                    {
+                        break;
+                    }
                 }
             }
-            fs.Position = currentIndex;
-            return result;
         }
         public void AttachGenericModificationEvent(Action e)
         {
