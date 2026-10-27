@@ -1,5 +1,5 @@
 # Line Picture Host (LPH)
-It's a light-weight and fast working GDI+ based vector drawing program. No premium, no payments, no "cloud integrations" it just works. Real tests were done on my **Ryzen 9 5950x**:\
+It's a light-weight and fast working GDI+ based vector drawing program. No premium, no payments, no "cloud integrations" it just works. Of course it doesn't collect ANY telemetry and keeps everything private, especially if you enable encryption for your session (a shared password is required, but if you dialed everything in, it's gonna be end-to-end, **nobody** except the Viewer and the Editor will ever be able to sniff your drawing). Real tests were done on my **Ryzen 9 5950x**:\
 Lines - ~400000 per second\
 Points - ~800000 per second
 
@@ -27,7 +27,7 @@ It's very straight forward, just open the program, press "Create new LPH file" a
    wss://data-set.su:3000/
    socket.io
    ```
-   P.s. if you want speed make your own FCIAS (repository is available) and use ws://yourfcias.net:30000/ and swap "socket.io" to "websocket"
+   P.s. if you want speed, make your own FCIAS (repository is available) and use ws://yourfcias.net:30000/ and swap "socket.io" to "websocket"
 4) Follow the TCP socket instruction, but instead of typing 0.0.0.0:130, leave it empty and press "Tetronet Address"
 5) And on the LPH Editor's side, type in the address of the viewer. It's gonna be displayed as a pop-up window, and in the title of the viewer, so you won't forget it. Also press the "Tetronet Address" mark
 6) Enjoy!
