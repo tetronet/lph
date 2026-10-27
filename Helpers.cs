@@ -48,6 +48,56 @@ namespace LPH_Edit_Viewer
             return decimal.Parse(s.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture);
         }
 
+        private static readonly string[] ColorChannelTexts = CreateColorChannelTexts();
+
+        /// <summary>
+        /// Text of one color channel for LPH data, written with Half (float16) precision: a few characters instead of ~29 for decimal.
+        /// Readers decode a channel as (int)(value * 255), so the text is chosen to decode back to exactly the same byte.
+        /// </summary>
+        public static string ColorChannelToLph(int channel)
+        {
+            return ColorChannelTexts[channel];
+        }
+
+        /// <summary>
+        /// "r g b" for LPH data, see <see cref="ColorChannelToLph"/>.
+        /// </summary>
+        public static string ColorToLph(Color color)
+        {
+            return $"{ColorChannelTexts[color.R]} {ColorChannelTexts[color.G]} {ColorChannelTexts[color.B]}";
+        }
+
+        private static string[] CreateColorChannelTexts()
+        {
+            string[] result = new string[256];
+            for (int c = 0; c < result.Length; c++)
+            {
+                // plain Half(c / 255) is the shortest, but rounding often puts it just below c / 255, and (int)(value * 255) then gives c - 1;
+                // the middle of the byte's range (c + 0.5) / 255 survives Half rounding and the truncation
+                string plain = ((Half)(c / 255.0)).ToString(CultureInfo.InvariantCulture);
+                string middle = ((Half)((c + 0.5) / 255.0)).ToString(CultureInfo.InvariantCulture);
+                if (DecodeColorChannel(plain) == c)
+                {
+                    result[c] = plain;
+                }
+                else if (DecodeColorChannel(middle) == c)
+                {
+                    result[c] = middle;
+                }
+                else
+                {
+                    // never happens with float16, but keep the color exact anyway
+                    result[c] = ((decimal)c / 255).ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            return result;
+        }
+
+        private static int DecodeColorChannel(string text)
+        {
+            return (int)(ParseDecimal(text) * 255);
+        }
+
         public static void CancelActionSafe(DiskStringBuilder dsb)
         {
             dsb.RemoveLastObject();

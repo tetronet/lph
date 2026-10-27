@@ -72,7 +72,8 @@ namespace LPH_Edit_Viewer
         private SRTPClient? ReliableTetronetClient;
         private const int CHUNK_SIZE = 8000;
         private int RetransmittedPacketCount = 0;
-        private byte[] AesKey = new byte[32];
+        // session key, derived when the editor asks for encryption
+        private byte[] AesKey = new byte[Aes256Helper.KEY_SIZE];
 
         public Viewer(string filename)
         {
@@ -331,7 +332,6 @@ namespace LPH_Edit_Viewer
                         }
                         AcceptOnlyFromLogin = options.Login;
                         AcceptOnlyFromPassword = options.Password;
-                        AesKey = [.. SHA512.HashData(Encoding.UTF8.GetBytes(AcceptOnlyFromPassword)).Take(32)];
                         AllowEncryption = options.UsingEncryption;
                         pps = options.DataBitrate;
                         if (!options.AuthReqired)
@@ -898,10 +898,13 @@ namespace LPH_Edit_Viewer
 
                             if (AllowEncryption)
                             {
-                                Task.Run(() => Interaction.MsgBox("This LPH session is securely encrypted using AES-256 cipher, so nobody will ever see your drawing", MsgBoxStyle.Information, "Tsu-k Interruptive Window"));
-                                Task.Run(() => Write("encryption_ok"));
-                                Thread.Sleep(100);
+                                // a new random salt for every session: the key is different each time
+                                byte[] salt = Aes256Helper.NewSalt();
+                                AesKey = Aes256Helper.DeriveKey(AcceptOnlyFromPassword, salt);
+                                // sent synchronously, so it surely leaves unencrypted before encryption is turned on
+                                Write("encryption_ok " + Convert.ToBase64String(salt));
                                 EncryptingDatagrams = true;
+                                Task.Run(() => Interaction.MsgBox("This LPH session is securely encrypted using AES-256 cipher, so nobody will ever see your drawing", MsgBoxStyle.Information, "Tsu-k Interruptive Window"));
                             }
                             else
                             {

@@ -71,7 +71,8 @@ namespace LPH_Edit_Viewer
         private bool encryption = false;
         private bool actuallyEncrypting = false;
         private RandomNumberGenerator rng = RandomNumberGenerator.Create();
-        private byte[] AesKey = new byte[32];
+        // session key, derived from the password and the salt the viewer sends in "encryption_ok"
+        private byte[] AesKey = new byte[Aes256Helper.KEY_SIZE];
         // homemade tcp
         private const int TIMEOUT_MS = 2000;
         private int pps = 500;
@@ -284,7 +285,7 @@ namespace LPH_Edit_Viewer
                                 tempGraphics.DrawLine(new Pen(currentColor), clickPos, new Point(e.X, e.Y));
                             }
                             isSecondClick = false;
-                            string toRender1 = $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n";
+                            string toRender1 = $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n";
                             outputExpression.Append(toRender1);
                             if (TransmitPictureToSerialPort)
                                 Task.Run(() => Write(toRender1.Replace("\n", "\r\n")));
@@ -306,9 +307,9 @@ namespace LPH_Edit_Viewer
                                 tempGraphics.FillEllipse(new SolidBrush(currentColor), clickPos.X - 2, clickPos.Y - 2, 4, 4);
                             }
                             isSecondClick = false;
-                            string toRender2 = $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n" +
-                                $"point {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n" +
-                                $"point {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n";
+                            string toRender2 = $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n" +
+                                $"point {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n" +
+                                $"point {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n";
                             outputExpression.Append(toRender2);
                             if (TransmitPictureToSerialPort)
                                 Task.Run(() => Write(toRender2.Replace("\n", "\r\n")));
@@ -320,7 +321,7 @@ namespace LPH_Edit_Viewer
                         {
                             tempGraphics.FillEllipse(new Pen(currentColor).Brush, e.X - 2, e.Y - 2, 4, 4);
                         }
-                        string toRender3 = $"point {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n";
+                        string toRender3 = $"point {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n";
                         outputExpression.Append(toRender3);
                         if (TransmitPictureToSerialPort)
                             Task.Run(() => Write(toRender3.Replace("\n", "\r\n")));
@@ -339,10 +340,10 @@ namespace LPH_Edit_Viewer
                                 tempGraphics.DrawRectangle(new Pen(currentColor), new Rectangle(clickPos, new Size(e.X - clickPos.X, e.Y - clickPos.Y)));
                             }
                             isSecondClick = false;
-                            string toRender4 = $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n" +
-                                $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)clickPos.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n" +
-                                $"line {(decimal)e.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n" +
-                                $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n";
+                            string toRender4 = $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n" +
+                                $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)clickPos.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n" +
+                                $"line {(decimal)e.X / panel1.Width * 100} {(decimal)clickPos.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n" +
+                                $"line {(decimal)clickPos.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100} {Helpers.ColorToLph(currentColor)}\n";
                             outputExpression.Append(toRender4);
                             if (TransmitPictureToSerialPort)
                                 Task.Run(() => Write(toRender4.Replace("\n", "\r\n")));
@@ -374,7 +375,7 @@ namespace LPH_Edit_Viewer
                                     {
                                         tempGraphics.DrawLine(new Pen(currentColor), x_line, y_line, x_end_line, y_end_line);
                                     }
-                                    string lineObjectForAddingAndTransmittingFill = $"line {(decimal)clickPosCopy.X / panel1.Width * 100} {i} {(decimal)eCopy.X / panel1.Width * 100} {i} {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255}\n";
+                                    string lineObjectForAddingAndTransmittingFill = $"line {(decimal)clickPosCopy.X / panel1.Width * 100} {i} {(decimal)eCopy.X / panel1.Width * 100} {i} {Helpers.ColorToLph(currentColor)}\n";
                                     outputExpression.Append(lineObjectForAddingAndTransmittingFill);
                                     if (TransmitPictureToSerialPort)
                                     {
@@ -438,7 +439,7 @@ namespace LPH_Edit_Viewer
                                 });
                             }
                             Guid trianglePolylineGuid = Guid.NewGuid();
-                            string triangleData = $"polyline {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255} {trianglePolylineGuid}\n" +
+                            string triangleData = $"polyline {Helpers.ColorToLph(currentColor)} {trianglePolylineGuid}\n" +
                                 $"pld {trianglePolylineGuid} 0 notLast {topPointXpercent} {(decimal)clickPos.Y / panel1.Height * 100}\n" +
                                 $"pld {trianglePolylineGuid} 1 notLast {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100}\n" +
                                 $"pld {trianglePolylineGuid} 2 notLast {(decimal)clickPos.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100}\n" +
@@ -509,7 +510,7 @@ namespace LPH_Edit_Viewer
                 polylineDrawing = true;
                 Guid id = Guid.NewGuid();
                 currentPolylineUuid = id;
-                string polylineHeader = $"polyline {(decimal)currentColor.R / 255} {(decimal)currentColor.G / 255} {(decimal)currentColor.B / 255} {id}\n";
+                string polylineHeader = $"polyline {Helpers.ColorToLph(currentColor)} {id}\n";
                 string polylineFirstSegment = $"pld {currentPolylineUuid} {currentPolylinePLDSeq} notLast {(decimal)e.X / panel1.Width * 100} {(decimal)e.Y / panel1.Height * 100}\n";
                 currentPolylinePLDSeq++;
                 polylineTempContainer.Append(polylineHeader).Append(polylineFirstSegment);
@@ -696,7 +697,7 @@ namespace LPH_Edit_Viewer
                                         {
                                             continue;
                                         }
-                                        if (keepaliveStopWatch.ElapsedMilliseconds > 10000)
+                                        if (keepaliveStopWatch.ElapsedMilliseconds > 30000)
                                         {
                                             MessageBox.Show("It seems like the remote side is not working, since there was no keep-alives in 10s. Normally, each keep-alive is sent in 5s interval, so if there's no keep-alives, this can mean that you drawing wasn't properly transmitted to the remote side. Very recommended to save it locally to prevent data loss.", "Tsu-k Interruptive Window", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                                             await Task.Delay(30000);
@@ -726,7 +727,6 @@ namespace LPH_Edit_Viewer
                             login = options.Login;
                             DebugWriter.WriteDebug("login: " + options.Login);
                             password = options.Password;
-                            AesKey = [.. SHA512.HashData(Encoding.UTF8.GetBytes(password)).Take(32)];
                             DebugWriter.WriteDebug("password was not printed out to the standart I/O stream for security reasons");
                             encryption = options.UsingEncryption;
                             DebugWriter.WriteDebug("encrypt: " + options.UsingEncryption);
@@ -1453,7 +1453,7 @@ namespace LPH_Edit_Viewer
                             {
                                 tempGraphics.FillEllipse(new SolidBrush(shapeColor), x_point - 2, y_point - 2, 4, 4);
                             }
-                            outputExpression.Append($"point {x_percent_point} {y_percent_point} {shapeColor.R / 255m} {shapeColor.G / 255m} {shapeColor.B / 255m}\n");
+                            outputExpression.Append($"point {x_percent_point} {y_percent_point} {Helpers.ColorToLph(shapeColor)}\n");
                             /*lock (_renderQueueLock)
                             {
                                 renderQueue.Add(new RenderObject(
@@ -1501,7 +1501,7 @@ namespace LPH_Edit_Viewer
                             {
                                 tempGraphics.DrawLine(new Pen(Color.FromArgb(red_line, green_line, blue_line)), x_line, y_line, x_end_line, y_end_line);
                             }
-                            outputExpression.Append($"line {x_percent_line} {y_percent_line} {x_end_percent_line} {y_end_percent_line} {red_color_line} {green_color_line} {blue_color_line}\n");
+                            outputExpression.Append($"line {x_percent_line} {y_percent_line} {x_end_percent_line} {y_end_percent_line} {Helpers.ColorChannelToLph(red_line)} {Helpers.ColorChannelToLph(green_line)} {Helpers.ColorChannelToLph(blue_line)}\n");
                             /*lock (_renderQueueLock)
                             {
                                 renderQueue.Add(new RenderObject(
@@ -1577,6 +1577,23 @@ namespace LPH_Edit_Viewer
                         }
                         break;
                     case "encryption_ok":
+                        // encryption_ok <base64 salt>: the session key is derived from the password and this salt
+                        byte[] salt;
+                        try
+                        {
+                            salt = Convert.FromBase64String(dataReceivedParts.Length >= 2 ? dataReceivedParts[1].Trim() : "");
+                        }
+                        catch (FormatException)
+                        {
+                            salt = [];
+                        }
+                        if (salt.Length != Aes256Helper.SALT_SIZE)
+                        {
+                            actuallyEncrypting = false;
+                            Task.Run(() => Interaction.MsgBox("Remote side uses an old LPH version with an incompatible encryption. This session will be NOT encrypted, update LPH on the remote side!", MsgBoxStyle.Exclamation, "Tsu-k Interruptive Window"));
+                            break;
+                        }
+                        AesKey = Aes256Helper.DeriveKey(password, salt);
                         actuallyEncrypting = true;
                         Task.Run(() => Interaction.MsgBox("Remote side accepted encryption. This means, that nobody could see this session's payload.", MsgBoxStyle.Information, "Tsu-k Interruptive Window"));
                         Task.Run(() => Write("k:" + password));

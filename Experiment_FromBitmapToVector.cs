@@ -62,10 +62,8 @@ namespace LPH_Edit_Viewer
                             {
                                 decimal x_percent = (decimal)j / bitmap.Width * 100;
                                 decimal y_percent = (decimal)i / bitmap.Height * 100;
-                                decimal r_div = (decimal)bitmap.GetPixel(j, i).R / 255;
-                                decimal g_div = (decimal)bitmap.GetPixel(j, i).G / 255;
-                                decimal b_div = (decimal)bitmap.GetPixel(j, i).B / 255;
-                                output.Append($"point {x_percent} {y_percent} {r_div} {g_div} {b_div}\n");
+                                Color pixel = bitmap.GetPixel(j, i);
+                                output.Append($"point {x_percent} {y_percent} {Helpers.ColorToLph(pixel)}\n");
                                 pixelsConverted++;
                             }
                             catch

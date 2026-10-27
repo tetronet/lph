@@ -56,9 +56,9 @@ namespace LPH_Edit_Viewer
                                     $"{y1.ToString($"f{numericUpDown1.Value}")} " +
                                     $"{x2.ToString($"f{numericUpDown1.Value}")} " +
                                     $"{y2.ToString($"f{numericUpDown1.Value}")} " +
-                                    $"{r.ToString($"f{numericUpDown1.Value}")} " +
-                                    $"{g.ToString($"f{numericUpDown1.Value}")} " +
-                                    $"{b.ToString($"f{numericUpDown1.Value}")}\n";
+                                    $"{Helpers.ColorChannelToLph((int)(r * 255))} " +
+                                    $"{Helpers.ColorChannelToLph((int)(g * 255))} " +
+                                    $"{Helpers.ColorChannelToLph((int)(b * 255))}\n";
                             }
                             else if (parts[0] == "point")
                             {
@@ -70,9 +70,9 @@ namespace LPH_Edit_Viewer
                                 toAppend = $"point " +
                                     $"{x.ToString($"f{numericUpDown1.Value}")} " +
                                     $"{y.ToString($"f{numericUpDown1.Value}")} " +
-                                    $"{r.ToString($"f{numericUpDown1.Value}")} " +
-                                    $"{g.ToString($"f{numericUpDown1.Value}")} " +
-                                    $"{b.ToString($"f{numericUpDown1.Value}")}\n";
+                                    $"{Helpers.ColorChannelToLph((int)(r * 255))} " +
+                                    $"{Helpers.ColorChannelToLph((int)(g * 255))} " +
+                                    $"{Helpers.ColorChannelToLph((int)(b * 255))}\n";
                             }
                             output.Append(toAppend);
                         }
