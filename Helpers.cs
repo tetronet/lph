@@ -1,10 +1,17 @@
-﻿using System.Drawing.Imaging;
+﻿using System.Diagnostics;
+using System.Drawing.Imaging;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace LPH_Edit_Viewer
 {
     public class Helpers
     {
+        [DllImport("user32.dll")]
+        static extern uint GetGuiResources(
+            IntPtr hProcess,
+            uint uiFlags
+        );
         private static readonly Point[] CursorPoints = [
             new(3, 2),
             new(3, 30),
@@ -26,8 +33,22 @@ namespace LPH_Edit_Viewer
                     continue;
                 }
                 g.FillPolygon(new SolidBrush(currentCursor.CursorColor), OffsetPointArray(CursorPoints, currentCursor.MouseX, currentCursor.MouseY));
+                g.DrawPolygon(new Pen(WhiteOrBlack(currentCursor.CursorColor) ? Color.Black : Color.White, 1.5f), OffsetPointArray(CursorPoints, currentCursor.MouseX, currentCursor.MouseY));
             }
             return result;
+        }
+        public static void MeasureSystemObjects(out uint gdi, out uint user)
+        {
+            gdi = GetGuiResources(Process.GetCurrentProcess().Handle, 0);
+            user = GetGuiResources(Process.GetCurrentProcess().Handle, 1);
+        }
+        public static Color InvertColorValue(Color input)
+        {
+            return Color.FromArgb(input.A, Math.Abs(255 - input.R), Math.Abs(255 - input.G), Math.Abs(255 - input.B));
+        }
+        public static bool WhiteOrBlack(Color clr)
+        {
+            return (clr.R + clr.G + clr.B) / 3f > 42.6;
         }
 
         public static Point[] OffsetPointArray(Point[] input, int dx, int dy)

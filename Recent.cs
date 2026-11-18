@@ -25,19 +25,26 @@ namespace LPH_Edit_Viewer
         // don't delete, this feature is for future!
         private void button3_Click(object sender, EventArgs e)
         {
-            if (listBox1.SelectedItem != null)
+            try
             {
-                listBox1.Items.Remove(listBox1.SelectedItem);
-                string oldRecentList = File.ReadAllText("Recent.text");
-                string newRecentList = oldRecentList.Replace((string)listBox1.SelectedItem, "");
-                Console.WriteLine(oldRecentList);
-                Console.WriteLine(newRecentList);
-                Console.WriteLine(listBox1.SelectedItem + "\n");
-                File.WriteAllText("Recent.text", newRecentList);
+                if (listBox1.SelectedItem != null)
+                {
+                    listBox1.Items.Remove(listBox1.SelectedItem);
+                    string oldRecentList = File.ReadAllText("Recent.text");
+                    string newRecentList = oldRecentList.Replace((string)listBox1.SelectedItem, "");
+                    Console.WriteLine(oldRecentList);
+                    Console.WriteLine(newRecentList);
+                    Console.WriteLine(listBox1.SelectedItem + "\n");
+                    File.WriteAllText("Recent.text", newRecentList);
+                }
+                else
+                {
+                    MessageBox.Show("ElementNotSelected: Error, \"There are no selected elems, try to select elems, that you wanna remove from recent.\"", "Tsu-k Interruptive Window");
+                }
             }
-            else
+            catch
             {
-                MessageBox.Show("ElementNotSelected: Error, \"There are no selected elems, try to select elems, that you wanna remove from recent.\"", "Tsu-k Interruptive Window");
+                
             }
         }
 

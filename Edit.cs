@@ -3,6 +3,7 @@ using ModemAPI;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -62,7 +63,11 @@ namespace LPH_Edit_Viewer
         // more misc
         private Color currentColor = Color.Blue;
         private ViewersCursor[] cursors = new ViewersCursor[256];
-        private long pingWasSent = 0;
+        // Stopwatch timestamp of the ping that was actually sent, 0 while it's still queued
+        private long pingSentTimestamp = 0;
+        private bool pingOutstanding = false;
+        private readonly object _pingLock = new();
+        private const int PING_TIMEOUT_MS = 10000;
         private bool alive = true;
         private bool renderingOverlay = true;
         // encryption
@@ -85,6 +90,7 @@ namespace LPH_Edit_Viewer
         private ConcurrentDictionary<ulong, byte[]> ReorderingBuffer = new ConcurrentDictionary<ulong, byte[]>();
         private ConcurrentDictionary<ulong, byte[]> PendingForAcknowledgementData = new ConcurrentDictionary<ulong, byte[]>();*/
         private TcpClient? serialPort = null;
+        private Address? UnameResolver = null;
         private readonly PacketReceiveBuffer receiveBuffer = new(64 * 1024 * 1024)
         {
             OnInvalidLength = length => DebugWriter.WriteDebug($"editor - invalid packet length {length}, dropping buffered data"),
@@ -192,6 +198,15 @@ namespace LPH_Edit_Viewer
                     }
                 }
             });*/
+            _ = Task.Run(delegate ()
+            {
+                while (true)
+                {
+                    Helpers.MeasureSystemObjects(out uint gdi, out uint user);
+                    Debug.WriteLine($"SYSTEM OBJECTS IN LPH: GDI={gdi} USER={user}");
+                    Thread.Sleep(1000);
+                }
+            });
         }
 
         private void ParseOutputExpression()
@@ -674,6 +689,7 @@ namespace LPH_Edit_Viewer
                 {
                     try
                     {
+                        Address destLphConnection = new();
                         if (options.TetronetAddress)
                         {
                             //await Task.Run(delegate ()
@@ -683,7 +699,20 @@ namespace LPH_Edit_Viewer
                                 {
                                     return;
                                 }
-                                ReliableTetronetClient = new(Modem, new(options.SerialPortName), LPH_QUERY_TYPE, LPH_CONNECTION_ID, TIMEOUT_MS * 10000);
+                                destLphConnection = new(options.SerialPortName);
+                                if (!Address.Validate(destLphConnection) && UnameResolver != null)
+                                {
+                                    UNNRPClient client = new(Modem);
+                                    try
+                                    {
+                                        destLphConnection = client.ResolveName(UnameResolver, options.SerialPortName, 30000)[0];
+                                    }
+                                    catch (TimeoutException)
+                                    {
+                                        MessageBox.Show($"It seems like the UNAME request timed out! This may mean that the packet was lost or the UNAME mapping server has problems. You were trying to use {UnameResolver} for resolving the UNAME.", "Tsu-k Interruptive Window", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                    }
+                                }
+                                ReliableTetronetClient = new(Modem, destLphConnection, LPH_QUERY_TYPE, LPH_CONNECTION_ID, TIMEOUT_MS * 10000);
                                 ReliableTetronetClient.TicksPacketDelay = (int)(10000000d / options.DataBitrate);
                                 usingTetronet = true;
                                 keepaliveStopWatch = Stopwatch.StartNew();
@@ -740,7 +769,7 @@ namespace LPH_Edit_Viewer
                             }
                             else
                             {
-                                Modem?.Transmit("cnt", new(options.SerialPortName), "lphrp", 125000000);
+                                Modem?.Transmit("cnt", destLphConnection, "lphrp", 125000000);
                             }
                             //Thread.Sleep(1000);
                             
@@ -1096,9 +1125,35 @@ namespace LPH_Edit_Viewer
         {
             if (TransmitPictureToSerialPort)
             {
-                MessageBox.Show($"Server response must took less than 10000ms");
-                Task.Run(() => Write("ping\r\n"));
-                pingWasSent = DateTime.Now.Ticks;
+                lock (_pingLock)
+                {
+                    // pong has no id: with two pings in flight a pong can't be matched to its ping
+                    if (pingOutstanding)
+                    {
+                        MessageBox.Show("The previous ping is still waiting for a response.", "Tsu-k Executive");
+                        return;
+                    }
+                    pingOutstanding = true;
+                    pingSentTimestamp = 0;
+                }
+                MessageBox.Show($"Server response must took less than {PING_TIMEOUT_MS}ms");
+                Task.Run(delegate ()
+                {
+                    long sentAt = 0;
+                    // the time is taken right before the packet goes to the network, not when it's queued
+                    Write("ping\r\n", () => sentAt = pingSentTimestamp = Stopwatch.GetTimestamp());
+                    Thread.Sleep(PING_TIMEOUT_MS);
+                    lock (_pingLock)
+                    {
+                        if (!pingOutstanding || pingSentTimestamp != sentAt)
+                        {
+                            return;
+                        }
+                        // a pong arriving after this is ignored (see "pong")
+                        pingOutstanding = false;
+                    }
+                    MessageBox.Show($"No response from the remote side in {PING_TIMEOUT_MS}ms.", "Tsu-k Interruptive Window");
+                });
             }
             else
             {
@@ -1185,7 +1240,8 @@ namespace LPH_Edit_Viewer
             }
         }
         long lastpkttx = 0;
-        private void Write(string data)
+        /// <param name="beforeSend">Gets called right before the data goes to the network (after the packet rate wait)</param>
+        private void Write(string data, Action? beforeSend = null)
         {
             lock (transmissionLock)
             {
@@ -1198,6 +1254,7 @@ namespace LPH_Edit_Viewer
                         byte[] dataToSend = new byte[dataBytes.Length + 4];
                         dataBytes.CopyTo(dataToSend, 4);
                         BinaryPrimitives.WriteInt32BigEndian(dataToSend, dataBytes.Length);
+                        beforeSend?.Invoke();
                         UnivWrite(dataToSend);
                     }
                     else
@@ -1206,6 +1263,7 @@ namespace LPH_Edit_Viewer
                         byte[] dataToSend = new byte[4 + encrypted.Length];
                         encrypted.CopyTo(dataToSend, 4);
                         BinaryPrimitives.WriteInt32BigEndian(dataToSend, encrypted.Length);
+                        beforeSend?.Invoke();
                         UnivWrite(dataToSend);
                     }
                     lastpkttx = DateTime.Now.Ticks;
@@ -1411,7 +1469,22 @@ namespace LPH_Edit_Viewer
                         Console.WriteLine($"Receiving {dataReceivedParts[1]} objects from the remote server");
                         break;
                     case "pong":
-                        Task.Run(() => MessageBox.Show($"The server response took {(DateTime.Now.Ticks - pingWasSent) / 10000}ms", "Tsu-k Interruptive Window"));
+                        {
+                            // measured here, not inside Task.Run, so thread pool delays don't get into the result
+                            long receivedAt = Stopwatch.GetTimestamp();
+                            lock (_pingLock)
+                            {
+                                if (!pingOutstanding || pingSentTimestamp == 0)
+                                {
+                                    // nobody asked (or the ping already timed out): don't show a meaningless number
+                                    DebugWriter.WriteDebug("editor - unexpected pong ignored");
+                                    break;
+                                }
+                                pingOutstanding = false;
+                            }
+                            double rttMs = Stopwatch.GetElapsedTime(pingSentTimestamp, receivedAt).TotalMilliseconds;
+                            Task.Run(() => MessageBox.Show($"The server response took {rttMs:F1}ms", "Tsu-k Interruptive Window"));
+                        }
                         break;
                     case "session_reset_acknowledged":
                         Task.Run(() => MessageBox.Show("Disconnected successfully! Now you can draw locally without sending data to a remote server.", "Tsu-k Interruptive Window"));
@@ -1647,6 +1720,7 @@ namespace LPH_Edit_Viewer
                 TetronetCorruptedConfigMessage();
                 return;
             }
+            UnameResolver = new(config[4]);
             // connect the modem to the tetronet
             Modem.Dial();
             Stopwatch stopwatchConnection = Stopwatch.StartNew();

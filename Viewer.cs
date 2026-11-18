@@ -74,6 +74,7 @@ namespace LPH_Edit_Viewer
         private int RetransmittedPacketCount = 0;
         // session key, derived when the editor asks for encryption
         private byte[] AesKey = new byte[Aes256Helper.KEY_SIZE];
+        private Address? UnameResolver = null;
 
         public Viewer(string filename)
         {
@@ -296,7 +297,20 @@ namespace LPH_Edit_Viewer
                                     {
                                         return;
                                     }
-                                    ReliableTetronetClient = new(Modem, new(options.SerialPortName), "lphrp", 125000000, TIMEOUT_MS * 10000);
+                                    Address lphViewerBufferServer = new(options.SerialPortName);
+                                    if (!Address.Validate(lphViewerBufferServer) && UnameResolver != null)
+                                    {
+                                        UNNRPClient client = new(Modem);
+                                        try
+                                        {
+                                            lphViewerBufferServer = client.ResolveName(UnameResolver, options.SerialPortName, 30000)[0];
+                                        }
+                                        catch (TimeoutException)
+                                        {
+                                            MessageBox.Show($"It seems like the UNAME request timed out! This may mean that the packet was lost or the UNAME mapping server has problems. You were trying to use {UnameResolver} for resolving the UNAME.", "Tsu-k Interruptive Window", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                        }
+                                    }
+                                    ReliableTetronetClient = new(Modem, lphViewerBufferServer, "lphrp", 125000000, TIMEOUT_MS * 10000);
                                     ReliableTetronetClient.TicksPacketDelay = (int)(10000000d / options.DataBitrate);
                                 }
                                 ReliableTetronetClient.OnRetransmit += delegate (long seqno)
@@ -1037,6 +1051,7 @@ namespace LPH_Edit_Viewer
                 TetronetCorruptedConfigMessage();
                 return;
             }
+            UnameResolver = new(config[4]);
             // connect the modem to the tetronet
             Modem.Dial();
             Stopwatch stopwatchConnection = Stopwatch.StartNew();
